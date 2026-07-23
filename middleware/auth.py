@@ -6,8 +6,10 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 from dotenv import load_dotenv
+from sqlalchemy import select
 
-from database import db, parse_object_id, serialize_doc
+from database import AsyncSessionLocal, serialize_doc
+from orm_models import User, Vendor
 
 load_dotenv()
 
@@ -66,29 +68,29 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     except JWTError:
         raise credentials_exception
 
-    obj_id = parse_object_id(user_id)
-    if not obj_id:
-        raise credentials_exception
+    async with AsyncSessionLocal() as session:
+        account = None
+        if role == "vendor":
+            res = await session.execute(select(Vendor).where(Vendor.id == str(user_id)))
+            account = res.scalar_one_or_none()
+        else:
+            res = await session.execute(select(User).where(User.id == str(user_id)))
+            account = res.scalar_one_or_none()
 
-    # Check users collection (customer, rider, admin)
-    account = None
-    if role == "vendor":
-        account = await db.vendors.find_one({"_id": obj_id})
-    else:
-        account = await db.users.find_one({"_id": obj_id})
-
-    if not account:
-        # Fallback check
-        account = await db.users.find_one({"_id": obj_id})
         if not account:
-            account = await db.vendors.find_one({"_id": obj_id})
+            # Fallback check
+            res_u = await session.execute(select(User).where(User.id == str(user_id)))
+            account = res_u.scalar_one_or_none()
+            if not account:
+                res_v = await session.execute(select(Vendor).where(Vendor.id == str(user_id)))
+                account = res_v.scalar_one_or_none()
 
-    if not account:
-        raise credentials_exception
+        if not account:
+            raise credentials_exception
 
-    account_data = serialize_doc(account)
-    account_data["role"] = account_data.get("role", role)
-    return account_data
+        account_data = serialize_doc(account)
+        account_data["role"] = account_data.get("role", role)
+        return account_data
 
 def require_roles(allowed_roles: List[str]):
     """

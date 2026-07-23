@@ -1,35 +1,27 @@
-import re
 from typing import Optional
 from fastapi import HTTPException, status
-from database import db, parse_object_id, serialize_doc
+from sqlalchemy import select, delete, or_, and_
+from database import AsyncSessionLocal, serialize_doc
 from models.food_model import FoodCreate, FoodUpdate
+from orm_models import Food, Vendor
 
 async def get_all_foods():
     try:
-        cursor = db.menuitems.find({"isAvailable": True})
-        foods = await cursor.to_list(length=500)
-        
-        serialized_foods = serialize_doc(foods)
-        # Populate vendor info
-        for food in serialized_foods:
-            if food.get("vendor"):
-                v_id = parse_object_id(food["vendor"])
+        async with AsyncSessionLocal() as session:
+            res = await session.execute(select(Food).where(Food.is_available == True))
+            foods = res.scalars().all()
+            
+            serialized_foods = serialize_doc(list(foods))
+            for food in serialized_foods:
+                v_id = food.get("vendor_id")
                 if v_id:
-                    v_doc = await db.vendors.find_one({"_id": v_id})
+                    v_res = await session.execute(select(Vendor).where(Vendor.id == str(v_id)))
+                    v_doc = v_res.scalar_one_or_none()
                     if v_doc:
                         v_clean = serialize_doc(v_doc)
                         v_clean.pop("password", None)
                         food["vendor"] = v_clean
-            elif food.get("vendorId"):
-                v_id = parse_object_id(food["vendorId"])
-                if v_id:
-                    v_doc = await db.vendors.find_one({"_id": v_id})
-                    if v_doc:
-                        v_clean = serialize_doc(v_doc)
-                        v_clean.pop("password", None)
-                        food["vendor"] = v_clean
-        
-        return serialized_foods
+            return serialized_foods
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -37,35 +29,37 @@ async def get_all_foods():
         )
 
 async def get_food_by_id(food_id: str):
-    obj_id = parse_object_id(food_id)
-    if not obj_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invalid Food ID")
+    async with AsyncSessionLocal() as session:
+        res = await session.execute(select(Food).where(Food.id == str(food_id)))
+        food = res.scalar_one_or_none()
+        if not food:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Food item not found")
 
-    food = await db.menuitems.find_one({"_id": obj_id})
-    if not food:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Food item not found")
-
-    serialized = serialize_doc(food)
-    
-    # Populate vendor
-    v_raw_id = serialized.get("vendor") or serialized.get("vendorId")
-    if v_raw_id:
-        v_id = parse_object_id(str(v_raw_id))
+        serialized = serialize_doc(food)
+        v_id = serialized.get("vendor_id")
         if v_id:
-            vendor = await db.vendors.find_one({"_id": v_id})
+            v_res = await session.execute(select(Vendor).where(Vendor.id == str(v_id)))
+            vendor = v_res.scalar_one_or_none()
             if vendor:
                 v_clean = serialize_doc(vendor)
                 v_clean.pop("password", None)
                 serialized["vendor"] = v_clean
 
-    return serialized
+        return serialized
 
 async def get_foods_by_category(category: str):
     try:
-        regex = re.compile(f"^{re.escape(category)}$", re.IGNORECASE)
-        cursor = db.menuitems.find({"category": regex, "isAvailable": True})
-        foods = await cursor.to_list(length=200)
-        return serialize_doc(foods)
+        async with AsyncSessionLocal() as session:
+            res = await session.execute(
+                select(Food).where(
+                    and_(
+                        Food.category.ilike(category),
+                        Food.is_available == True
+                    )
+                )
+            )
+            foods = res.scalars().all()
+            return serialize_doc(list(foods))
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -74,38 +68,40 @@ async def get_foods_by_category(category: str):
 
 async def filter_foods(category: Optional[str] = None, calories: Optional[int] = None, city: Optional[str] = None):
     try:
-        query = {"isAvailable": True}
+        async with AsyncSessionLocal() as session:
+            stmt = select(Food).where(Food.is_available == True)
 
-        if calories is not None:
-            query["calories"] = {"$lte": calories}
+            if calories is not None:
+                stmt = stmt.where(Food.calories <= calories)
 
-        if category:
-            cat_regex = re.compile(re.escape(category), re.IGNORECASE)
-            query["$or"] = [
-                {"category": cat_regex},
-                {"tags": {"$in": [category.lower()]}}
-            ]
+            if category:
+                stmt = stmt.where(Food.category.ilike(f"%{category}%"))
 
-        if city:
-            city_regex = re.compile(re.escape(city), re.IGNORECASE)
-            vendors_in_city = await db.vendors.find({"address": city_regex, "isActive": True}).to_list(length=100)
-            vendor_ids = [v["_id"] for v in vendors_in_city]
-            query["vendor"] = {"$in": vendor_ids}
+            if city:
+                v_res = await session.execute(
+                    select(Vendor.id).where(
+                        and_(
+                            Vendor.address.ilike(f"%{city}%"),
+                            Vendor.is_active == True
+                        )
+                    )
+                )
+                vendor_ids = [v[0] for v in v_res.all()]
+                stmt = stmt.where(Food.vendor_id.in_(vendor_ids))
 
-        cursor = db.menuitems.find(query)
-        foods = await cursor.to_list(length=200)
-        serialized_foods = serialize_doc(foods)
+            res = await session.execute(stmt)
+            foods = res.scalars().all()
+            serialized_foods = serialize_doc(list(foods))
 
-        for food in serialized_foods:
-            v_raw = food.get("vendor") or food.get("vendorId")
-            if v_raw:
-                v_id = parse_object_id(str(v_raw))
+            for food in serialized_foods:
+                v_id = food.get("vendor_id")
                 if v_id:
-                    v_doc = await db.vendors.find_one({"_id": v_id})
+                    v_res = await session.execute(select(Vendor).where(Vendor.id == str(v_id)))
+                    v_doc = v_res.scalar_one_or_none()
                     if v_doc:
                         food["vendor"] = serialize_doc(v_doc)
 
-        return serialized_foods
+            return serialized_foods
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -115,24 +111,24 @@ async def filter_foods(category: Optional[str] = None, calories: Optional[int] =
 async def create_food(data: FoodCreate, current_user: dict):
     try:
         vendor_id_str = data.vendorId or current_user["id"]
-        v_obj_id = parse_object_id(vendor_id_str)
 
-        food_doc = {
-            "vendor": v_obj_id if v_obj_id else vendor_id_str,
-            "vendorId": str(vendor_id_str),
-            "name": data.name,
-            "price": data.price,
-            "category": data.category,
-            "description": data.description,
-            "calories": data.calories,
-            "isAvailable": data.isAvailable,
-            "tags": data.tags,
-            "image": data.image
-        }
+        async with AsyncSessionLocal() as session:
+            food_obj = Food(
+                vendor_id=str(vendor_id_str),
+                name=data.name,
+                price=data.price,
+                category=data.category,
+                description=data.description,
+                calories=data.calories or 0,
+                is_available=data.isAvailable,
+                tags=data.tags or [],
+                image=data.image
+            )
 
-        result = await db.menuitems.insert_one(food_doc)
-        food_doc["_id"] = result.inserted_id
-        return serialize_doc(food_doc)
+            session.add(food_obj)
+            await session.commit()
+            await session.refresh(food_obj)
+            return serialize_doc(food_obj)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -140,41 +136,38 @@ async def create_food(data: FoodCreate, current_user: dict):
         )
 
 async def update_food(food_id: str, data: FoodUpdate, current_user: dict):
-    obj_id = parse_object_id(food_id)
-    if not obj_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invalid Food ID")
+    async with AsyncSessionLocal() as session:
+        res = await session.execute(select(Food).where(Food.id == str(food_id)))
+        food = res.scalar_one_or_none()
+        if not food:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Food item not found")
 
-    food = await db.menuitems.find_one({"_id": obj_id})
-    if not food:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Food item not found")
+        if current_user.get("role") == "vendor":
+            if str(food.vendor_id) != str(current_user["id"]):
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized to edit this food item")
 
-    # Check vendor ownership if role is vendor
-    if current_user.get("role") == "vendor":
-        v_id_str = str(food.get("vendor") or food.get("vendorId") or "")
-        if v_id_str != current_user["id"]:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized to edit this food item")
+        update_dict = {k: v for k, v in data.dict(exclude_unset=True).items() if v is not None}
+        for k, v in update_dict.items():
+            if k == "isAvailable":
+                food.is_available = v
+            elif hasattr(food, k):
+                setattr(food, k, v)
 
-    update_dict = {k: v for k, v in data.dict(exclude_unset=True).items() if v is not None}
-    if not update_dict:
+        await session.commit()
+        await session.refresh(food)
         return serialize_doc(food)
 
-    await db.menuitems.update_one({"_id": obj_id}, {"$set": update_dict})
-    updated_food = await db.menuitems.find_one({"_id": obj_id})
-    return serialize_doc(updated_food)
-
 async def delete_food(food_id: str, current_user: dict):
-    obj_id = parse_object_id(food_id)
-    if not obj_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invalid Food ID")
+    async with AsyncSessionLocal() as session:
+        res = await session.execute(select(Food).where(Food.id == str(food_id)))
+        food = res.scalar_one_or_none()
+        if not food:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Food item not found")
 
-    food = await db.menuitems.find_one({"_id": obj_id})
-    if not food:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Food item not found")
+        if current_user.get("role") == "vendor":
+            if str(food.vendor_id) != str(current_user["id"]):
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized to delete this food item")
 
-    if current_user.get("role") == "vendor":
-        v_id_str = str(food.get("vendor") or food.get("vendorId") or "")
-        if v_id_str != current_user["id"]:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized to delete this food item")
-
-    await db.menuitems.delete_one({"_id": obj_id})
-    return {"message": "Food item deleted successfully"}
+        await session.delete(food)
+        await session.commit()
+        return {"message": "Food item deleted successfully"}

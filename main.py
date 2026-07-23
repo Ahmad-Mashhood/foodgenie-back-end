@@ -1,7 +1,7 @@
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from database import db, client
+from database import init_db
 from routes import (
     auth_routes,
     food_routes,
@@ -14,7 +14,7 @@ from routes import (
 )
 
 app = FastAPI(
-    title="FoodGenie REST API — FastAPI Backend",
+    title="FoodGenie REST API — FastAPI Backend (Neon PostgreSQL)",
     description=(
         "Smart Food Recommendation & Local Vendor Platform for Vehari city, Pakistan. "
         "Provides REST endpoints for Customers, Vendors, Riders, and Admins with built-in "
@@ -58,21 +58,16 @@ app.include_router(admin_routes.router)
 @app.on_event("startup")
 async def startup_db_client():
     try:
-        # Ping MongoDB database
-        await client.admin.command('ping')
-        print("[OK] Successfully connected to MongoDB (Motor Async)")
+        await init_db()
+        print("[OK] Successfully connected to Neon PostgreSQL and initialized database tables.")
     except Exception as e:
-        print(f"[WARNING] MongoDB Connection Warning: {e}")
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()
-    print("[INFO] MongoDB Connection closed.")
+        print(f"[WARNING] PostgreSQL Connection / Initialization Warning: {e}")
 
 @app.get("/", tags=["Health Check"])
 async def root():
     return {
         "status": "online",
+        "database": "Neon PostgreSQL",
         "app": "FoodGenie REST API",
         "version": "2.0.0",
         "city": "Vehari, Pakistan",

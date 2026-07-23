@@ -1,20 +1,21 @@
-import pymongo
 import requests
+from database import SyncSessionLocal
+from sqlalchemy import text
 
 BASE_URL = "http://127.0.0.1:8000"
 
 def test_fastapi_endpoints():
-    print("--- Testing FastAPI Backend & Swagger UI Integration ---\n")
+    print("--- Testing FastAPI Backend & Swagger UI Integration (Neon PostgreSQL) ---\n")
 
-    # Cleanup test accounts from database
+    # Cleanup test accounts from database using SQLAlchemy sync session
     try:
-        client = pymongo.MongoClient("mongodb://localhost:27017/")
-        db = client["food-genie"]
-        db.users.delete_many({"email": {"$regex": "@test\\.com$"}})
-        db.vendors.delete_many({"email": {"$regex": "@test\\.com$"}})
-        db.menuitems.delete_many({"name": {"$regex": "Vehari|Test"}})
-        db.orders.delete_many({})
-        client.close()
+        session = SyncSessionLocal()
+        session.execute(text("DELETE FROM orders WHERE customer_id IN (SELECT id FROM users WHERE email LIKE '%@test.com%') OR vendor_id IN (SELECT id FROM vendors WHERE email LIKE '%@test.com%')"))
+        session.execute(text("DELETE FROM foods WHERE name LIKE '%Vehari%' OR name LIKE '%Test%'"))
+        session.execute(text("DELETE FROM users WHERE email LIKE '%@test.com%'"))
+        session.execute(text("DELETE FROM vendors WHERE email LIKE '%@test.com%'"))
+        session.commit()
+        session.close()
     except Exception as e:
         print(f"[NOTE] DB cleanup skipped: {e}")
 
@@ -185,7 +186,7 @@ def test_fastapi_endpoints():
     r = requests.get(f"{BASE_URL}/api/admin/analytics", headers=a_headers)
     print(f"    Status: {r.status_code} | Analytics: {r.json()}")
 
-    print("\n[OK] ALL FASTAPI & SWAGGER UI ENDPOINT TESTS PASSED SUCCESSFULLY!")
+    print("\n[OK] ALL FASTAPI & SWAGGER UI ENDPOINT TESTS PASSED SUCCESSFULLY ON NEON POSTGRESQL!")
 
 if __name__ == "__main__":
     test_fastapi_endpoints()

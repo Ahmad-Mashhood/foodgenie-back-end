@@ -1,33 +1,39 @@
 from datetime import datetime
 from fastapi import HTTPException, status
-from database import db, parse_object_id, serialize_doc
+from sqlalchemy import select, or_, desc
+from database import AsyncSessionLocal, serialize_doc
 from models.order_model import OrderCreate, OrderStatusUpdate
+from orm_models import Order, User, Vendor
 
 async def create_order(data: OrderCreate, current_user: dict):
     try:
         cust_id = current_user["id"]
-        v_obj_id = parse_object_id(data.vendorId)
 
-        order_doc = {
-            "customer": parse_object_id(cust_id) or cust_id,
-            "customerId": cust_id,
-            "vendor": v_obj_id or data.vendorId,
-            "vendorId": data.vendorId,
-            "rider": None,
-            "riderId": None,
-            "items": [item.dict() for item in data.items],
-            "totalAmount": data.totalAmount,
-            "status": "pending",
-            "deliveryAddress": data.deliveryAddress,
-            "paymentMethod": data.paymentMethod or "cash",
-            "isPaid": False,
-            "specialInstructions": data.specialInstructions or "",
-            "createdAt": datetime.utcnow().isoformat()
-        }
+        async with AsyncSessionLocal() as session:
+            order_obj = Order(
+                customer_id=str(cust_id),
+                vendor_id=str(data.vendorId),
+                rider_id=None,
+                items=[item.dict() for item in data.items],
+                total_amount=data.totalAmount,
+                status="pending",
+                delivery_address=data.deliveryAddress,
+                payment_method=data.paymentMethod or "cash",
+                special_instructions=data.specialInstructions or "",
+                created_at=datetime.utcnow()
+            )
 
-        result = await db.orders.insert_one(order_doc)
-        order_doc["_id"] = result.inserted_id
-        return serialize_doc(order_doc)
+            session.add(order_obj)
+            await session.commit()
+            await session.refresh(order_obj)
+
+            res_dict = serialize_doc(order_obj)
+            res_dict["customerId"] = res_dict.get("customer_id")
+            res_dict["vendorId"] = res_dict.get("vendor_id")
+            res_dict["riderId"] = res_dict.get("rider_id")
+            res_dict["totalAmount"] = res_dict.get("total_amount")
+            res_dict["createdAt"] = res_dict.get("created_at")
+            return res_dict
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -35,110 +41,128 @@ async def create_order(data: OrderCreate, current_user: dict):
         )
 
 async def get_order_by_id(order_id: str, current_user: dict):
-    obj_id = parse_object_id(order_id)
-    if not obj_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invalid Order ID")
+    async with AsyncSessionLocal() as session:
+        res = await session.execute(select(Order).where(Order.id == str(order_id)))
+        order = res.scalar_one_or_none()
+        if not order:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
 
-    order = await db.orders.find_one({"_id": obj_id})
-    if not order:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+        serialized = serialize_doc(order)
+        serialized["customerId"] = serialized.get("customer_id")
+        serialized["vendorId"] = serialized.get("vendor_id")
+        serialized["riderId"] = serialized.get("rider_id")
+        serialized["totalAmount"] = serialized.get("total_amount")
+        serialized["createdAt"] = serialized.get("created_at")
 
-    serialized = serialize_doc(order)
-    
-    # Populate customer, vendor, rider
-    if serialized.get("customerId"):
-        c_obj = parse_object_id(serialized["customerId"])
-        if c_obj:
-            c_doc = await db.users.find_one({"_id": c_obj})
+        if serialized.get("customer_id"):
+            c_res = await session.execute(select(User).where(User.id == str(serialized["customer_id"])))
+            c_doc = c_res.scalar_one_or_none()
             if c_doc:
                 c_clean = serialize_doc(c_doc)
                 c_clean.pop("password", None)
                 serialized["customer"] = c_clean
 
-    if serialized.get("vendorId"):
-        v_obj = parse_object_id(serialized["vendorId"])
-        if v_obj:
-            v_doc = await db.vendors.find_one({"_id": v_obj})
+        if serialized.get("vendor_id"):
+            v_res = await session.execute(select(Vendor).where(Vendor.id == str(serialized["vendor_id"])))
+            v_doc = v_res.scalar_one_or_none()
             if v_doc:
                 v_clean = serialize_doc(v_doc)
                 v_clean.pop("password", None)
                 serialized["vendor"] = v_clean
 
-    if serialized.get("riderId"):
-        r_obj = parse_object_id(serialized["riderId"])
-        if r_obj:
-            r_doc = await db.users.find_one({"_id": r_obj})
+        if serialized.get("rider_id"):
+            r_res = await session.execute(select(User).where(User.id == str(serialized["rider_id"])))
+            r_doc = r_res.scalar_one_or_none()
             if r_doc:
                 r_clean = serialize_doc(r_doc)
                 r_clean.pop("password", None)
                 serialized["rider"] = r_clean
 
-    return serialized
+        return serialized
 
 async def update_order_status(order_id: str, data: OrderStatusUpdate, current_user: dict):
-    obj_id = parse_object_id(order_id)
-    if not obj_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invalid Order ID")
+    async with AsyncSessionLocal() as session:
+        res = await session.execute(select(Order).where(Order.id == str(order_id)))
+        order = res.scalar_one_or_none()
+        if not order:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
 
-    order = await db.orders.find_one({"_id": obj_id})
-    if not order:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+        status_val = data.status.value if hasattr(data.status, "value") else str(data.status)
+        order.status = status_val
 
-    status_val = data.status.value if hasattr(data.status, "value") else str(data.status)
-    update_fields = {"status": status_val}
+        if data.riderId:
+            order.rider_id = str(data.riderId)
+        elif current_user.get("role") == "rider":
+            order.rider_id = str(current_user["id"])
 
-    if data.riderId:
-        r_obj = parse_object_id(data.riderId)
-        update_fields["rider"] = r_obj or data.riderId
-        update_fields["riderId"] = data.riderId
-    elif current_user.get("role") == "rider":
-        r_id = current_user["id"]
-        r_obj = parse_object_id(r_id)
-        update_fields["rider"] = r_obj or r_id
-        update_fields["riderId"] = r_id
+        await session.commit()
+        await session.refresh(order)
 
-    await db.orders.update_one({"_id": obj_id}, {"$set": update_fields})
-    updated_order = await db.orders.find_one({"_id": obj_id})
-    return serialize_doc(updated_order)
+        serialized = serialize_doc(order)
+        serialized["customerId"] = serialized.get("customer_id")
+        serialized["vendorId"] = serialized.get("vendor_id")
+        serialized["riderId"] = serialized.get("rider_id")
+        serialized["totalAmount"] = serialized.get("total_amount")
+        serialized["createdAt"] = serialized.get("created_at")
+        return serialized
 
 async def cancel_order(order_id: str, current_user: dict):
-    obj_id = parse_object_id(order_id)
-    if not obj_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invalid Order ID")
+    async with AsyncSessionLocal() as session:
+        res = await session.execute(select(Order).where(Order.id == str(order_id)))
+        order = res.scalar_one_or_none()
+        if not order:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
 
-    order = await db.orders.find_one({"_id": obj_id})
-    if not order:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+        if current_user.get("role") != "admin" and str(order.customer_id) != str(current_user["id"]):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized to cancel this order")
 
-    serialized = serialize_doc(order)
-    cust_id_str = str(serialized.get("customerId") or serialized.get("customer") or "")
+        if order.status == "delivered":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Delivered orders cannot be cancelled")
 
-    if current_user.get("role") != "admin" and cust_id_str != current_user["id"]:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized to cancel this order")
+        order.status = "cancelled"
+        await session.commit()
+        await session.refresh(order)
 
-    if serialized.get("status") == "delivered":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Delivered orders cannot be cancelled")
-
-    await db.orders.update_one({"_id": obj_id}, {"$set": {"status": "cancelled"}})
-    updated_order = await db.orders.find_one({"_id": obj_id})
-    return serialize_doc(updated_order)
+        serialized = serialize_doc(order)
+        serialized["customerId"] = serialized.get("customer_id")
+        serialized["vendorId"] = serialized.get("vendor_id")
+        serialized["riderId"] = serialized.get("rider_id")
+        serialized["totalAmount"] = serialized.get("total_amount")
+        serialized["createdAt"] = serialized.get("created_at")
+        return serialized
 
 async def get_customer_orders(customer_id: str, current_user: dict):
-    if current_user.get("role") != "admin" and current_user.get("id") != customer_id:
+    if current_user.get("role") != "admin" and str(current_user.get("id")) != str(customer_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized access to customer orders")
 
-    c_obj = parse_object_id(customer_id)
-    query = {"$or": [{"customer": c_obj}, {"customer": customer_id}, {"customerId": customer_id}]}
-    cursor = db.orders.find(query).sort("createdAt", -1)
-    orders = await cursor.to_list(length=200)
-    return serialize_doc(orders)
+    async with AsyncSessionLocal() as session:
+        res = await session.execute(
+            select(Order).where(Order.customer_id == str(customer_id)).order_by(desc(Order.created_at))
+        )
+        orders = res.scalars().all()
+        serialized_list = serialize_doc(list(orders))
+        for o in serialized_list:
+            o["customerId"] = o.get("customer_id")
+            o["vendorId"] = o.get("vendor_id")
+            o["riderId"] = o.get("rider_id")
+            o["totalAmount"] = o.get("total_amount")
+            o["createdAt"] = o.get("created_at")
+        return serialized_list
 
 async def get_vendor_orders(vendor_id: str, current_user: dict):
-    if current_user.get("role") != "admin" and current_user.get("id") != vendor_id:
+    if current_user.get("role") != "admin" and str(current_user.get("id")) != str(vendor_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized access to vendor orders")
 
-    v_obj = parse_object_id(vendor_id)
-    query = {"$or": [{"vendor": v_obj}, {"vendor": vendor_id}, {"vendorId": vendor_id}]}
-    cursor = db.orders.find(query).sort("createdAt", -1)
-    orders = await cursor.to_list(length=200)
-    return serialize_doc(orders)
+    async with AsyncSessionLocal() as session:
+        res = await session.execute(
+            select(Order).where(Order.vendor_id == str(vendor_id)).order_by(desc(Order.created_at))
+        )
+        orders = res.scalars().all()
+        serialized_list = serialize_doc(list(orders))
+        for o in serialized_list:
+            o["customerId"] = o.get("customer_id")
+            o["vendorId"] = o.get("vendor_id")
+            o["riderId"] = o.get("rider_id")
+            o["totalAmount"] = o.get("total_amount")
+            o["createdAt"] = o.get("created_at")
+        return serialized_list
