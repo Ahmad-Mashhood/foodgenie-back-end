@@ -1,78 +1,76 @@
-import re
-from typing import Optional, List
-from pydantic import BaseModel, Field
 from fastapi import HTTPException, status
-from sqlalchemy import select, and_
-from database import AsyncSessionLocal, serialize_doc
-from orm_models import User, Food, Vendor
+from database import SyncSessionLocal, serialize_doc
+from schemas.review import RecommendationCriteria
+from models.user import User
+from models.user_preferences import UserPreferences
+from models.food import Food
+from models.vendor import Vendor
 
-class RecommendationCriteria(BaseModel):
-    diet: Optional[str] = Field(None, example="vegan")
-    calories: Optional[int] = Field(None, example=600)
-    healthGoals: Optional[List[str]] = Field(None, example=["low-fat", "healthy"])
-    allergies: Optional[List[str]] = Field(None, example=["nuts"])
-
-async def get_recommendations_for_customer(customer_id: str, current_user: dict):
-    async with AsyncSessionLocal() as session:
-        c_res = await session.execute(select(User).where(User.id == str(customer_id)))
-        customer = c_res.scalar_one_or_none()
+async def get_recommendations_for_customer(customer_id: int, current_user: dict):
+    session = SyncSessionLocal()
+    try:
+        customer = session.query(User).filter(User.id == customer_id).first()
         if not customer:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
 
-        prefs = customer.preferences or {}
-        stmt = select(Food).where(Food.is_available == True)
+        prefs = session.query(UserPreferences).filter(UserPreferences.user_id == customer_id).first()
+        query = session.query(Food).filter(Food.is_available == True)
 
-        if prefs.get("calories"):
-            stmt = stmt.where(Food.calories <= int(prefs["calories"]))
+        if prefs:
+            if prefs.max_calories:
+                query = query.filter(Food.calories <= prefs.max_calories)
+            if prefs.diet_type and prefs.diet_type != "any":
+                query = query.filter(Food.category.ilike(f"%{prefs.diet_type}%"))
 
-        stmt = stmt.limit(10)
-        res = await session.execute(stmt)
-        recommendations = res.scalars().all()
-
+        recommendations = query.limit(10).all()
         if not recommendations:
-            res_all = await session.execute(select(Food).where(Food.is_available == True).limit(10))
-            recommendations = res_all.scalars().all()
+            recommendations = session.query(Food).filter(Food.is_available == True).limit(10).all()
 
-        serialized = serialize_doc(list(recommendations))
-
+        serialized = serialize_doc(recommendations)
         for food in serialized:
-            v_id = food.get("vendor_id")
-            if v_id:
-                v_res = await session.execute(select(Vendor).where(Vendor.id == str(v_id)))
-                vendor = v_res.scalar_one_or_none()
-                if vendor:
-                    v_clean = serialize_doc(vendor)
+            if food.get("vendor_id"):
+                v_doc = session.query(Vendor).filter(Vendor.id == food["vendor_id"]).first()
+                if v_doc:
+                    v_clean = serialize_doc(v_doc)
                     v_clean.pop("password", None)
                     food["vendor"] = v_clean
 
         return serialized
+    finally:
+        session.close()
 
 async def generate_recommendations(data: RecommendationCriteria, current_user: dict):
+    session = SyncSessionLocal()
     try:
-        async with AsyncSessionLocal() as session:
-            stmt = select(Food).where(Food.is_available == True)
+        query = session.query(Food).filter(Food.is_available == True)
 
-            if data.calories is not None:
-                stmt = stmt.where(Food.calories <= data.calories)
+        if data.max_calories is not None:
+            query = query.filter(Food.calories <= data.max_calories)
 
-            stmt = stmt.limit(10)
-            res = await session.execute(stmt)
-            recommendations = res.scalars().all()
+        if data.diet_type and data.diet_type != "any":
+            query = query.filter(Food.category.ilike(f"%{data.diet_type}%"))
 
-            serialized = serialize_doc(list(recommendations))
-            for food in serialized:
-                v_id = food.get("vendor_id")
-                if v_id:
-                    v_res = await session.execute(select(Vendor).where(Vendor.id == str(v_id)))
-                    vendor = v_res.scalar_one_or_none()
-                    if vendor:
-                        v_clean = serialize_doc(vendor)
-                        v_clean.pop("password", None)
-                        food["vendor"] = v_clean
+        if data.preferred_cuisine:
+            query = query.filter(Food.category.ilike(f"%{data.preferred_cuisine}%"))
 
-            return serialized
+        recommendations = query.limit(10).all()
+        if not recommendations:
+            recommendations = session.query(Food).filter(Food.is_available == True).limit(10).all()
+
+        serialized = serialize_doc(recommendations)
+        for food in serialized:
+            if food.get("vendor_id"):
+                v_doc = session.query(Vendor).filter(Vendor.id == food["vendor_id"]).first()
+                if v_doc:
+                    v_clean = serialize_doc(v_doc)
+                    v_clean.pop("password", None)
+                    food["vendor"] = v_clean
+
+        return serialized
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate recommendations: {str(e)}"
         )
+    finally:
+        session.close()

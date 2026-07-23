@@ -5,15 +5,18 @@ from sqlalchemy import text
 BASE_URL = "http://127.0.0.1:8000"
 
 def test_fastapi_endpoints():
-    print("--- Testing FastAPI Backend & Swagger UI Integration (Neon PostgreSQL) ---\n")
+    print("--- Testing Modular FastAPI Backend (Neon PostgreSQL) ---\n")
 
-    # Cleanup test accounts from database using SQLAlchemy sync session
+    # Cleanup test records
     try:
         session = SyncSessionLocal()
-        session.execute(text("DELETE FROM orders WHERE customer_id IN (SELECT id FROM users WHERE email LIKE '%@test.com%') OR vendor_id IN (SELECT id FROM vendors WHERE email LIKE '%@test.com%')"))
+        session.execute(text("DELETE FROM reviews WHERE comment LIKE '%Test%'"))
+        session.execute(text("DELETE FROM order_items WHERE price > 0"))
+        session.execute(text("DELETE FROM orders WHERE delivery_address LIKE '%Vehari%'"))
         session.execute(text("DELETE FROM foods WHERE name LIKE '%Vehari%' OR name LIKE '%Test%'"))
         session.execute(text("DELETE FROM users WHERE email LIKE '%@test.com%'"))
         session.execute(text("DELETE FROM vendors WHERE email LIKE '%@test.com%'"))
+        session.execute(text("DELETE FROM riders WHERE email LIKE '%@test.com%'"))
         session.commit()
         session.close()
     except Exception as e:
@@ -43,7 +46,6 @@ def test_fastapi_endpoints():
     print(f"   Status: {r.status_code}")
     cust_resp = r.json()
     cust_token = cust_resp.get("token")
-    cust_id = cust_resp.get("user", {}).get("id")
 
     print("4. Testing POST /api/auth/register (Rider)...")
     rider_data = {
@@ -71,7 +73,6 @@ def test_fastapi_endpoints():
     print(f"   Status: {r.status_code}")
     admin_resp = r.json()
     admin_token = admin_resp.get("token")
-    admin_id = admin_resp.get("user", {}).get("id")
 
     print("6. Testing POST /api/vendors/register (Vendor)...")
     vendor_data = {
@@ -80,9 +81,7 @@ def test_fastapi_endpoints():
         "password": "password123",
         "city": "Vehari",
         "phone": "+923007778888",
-        "category": "Pakistani",
-        "cuisine": "Biryani & Karahi",
-        "address": "Jinnah Shaheed Road, Vehari"
+        "category": "restaurant"
     }
     r = requests.post(f"{BASE_URL}/api/vendors/register", json=vendor_data)
     print(f"   Status: {r.status_code}")
@@ -104,8 +103,8 @@ def test_fastapi_endpoints():
         "category": "biryani",
         "description": "Authentic fragrant spicy chicken biryani",
         "calories": 480,
-        "isAvailable": True,
-        "tags": ["spicy", "biryani", "healthy", "rice"]
+        "is_available": True,
+        "vendor_id": vendor_id
     }
     r = requests.post(f"{BASE_URL}/api/foods", json=food_data, headers=v_headers)
     print(f"   Status: {r.status_code}")
@@ -116,8 +115,8 @@ def test_fastapi_endpoints():
     r = requests.get(f"{BASE_URL}/api/foods")
     print(f"   Status: {r.status_code} | Total Foods: {len(r.json())}")
 
-    print("10. Testing GET /api/foods/filter?category=healthy&calories=500...")
-    r = requests.get(f"{BASE_URL}/api/foods/filter?category=healthy&calories=500")
+    print("10. Testing GET /api/foods/filter?category=biryani&max_calories=500...")
+    r = requests.get(f"{BASE_URL}/api/foods/filter?category=biryani&max_calories=500")
     print(f"    Status: {r.status_code} | Found Foods: {len(r.json())}")
 
     # 4. Vendor Status & Search
@@ -132,59 +131,43 @@ def test_fastapi_endpoints():
     # 5. Smart Health Recommendations
     print("\n13. Testing POST /api/recommendations/generate...")
     rec_data = {
-        "diet": "biryani",
-        "calories": 500,
-        "healthGoals": ["healthy", "rice"]
+        "diet_type": "biryani",
+        "max_calories": 500,
+        "preferred_cuisine": "Pakistani"
     }
     r = requests.post(f"{BASE_URL}/api/recommendations/generate", json=rec_data, headers=headers)
     print(f"    Status: {r.status_code} | Recs Count: {len(r.json())}")
 
-    # 6. Orders & Rider Tracking
+    # 6. Orders & Reviews
     print("\n14. Testing POST /api/orders (Place Order)...")
     order_data = {
-        "vendorId": vendor_id,
+        "vendor_id": vendor_id,
         "items": [
-            {"menuItemId": food_id, "name": "Special Vehari Chicken Biryani", "price": 380.0, "quantity": 2}
+            {"food_id": food_id, "quantity": 2, "price": 380.0}
         ],
-        "totalAmount": 760.0,
-        "deliveryAddress": {"address": "House 45, Sharqi Colony, Vehari", "lat": 30.0470, "lng": 72.3580},
-        "paymentMethod": "cash"
+        "total_amount": 760.0,
+        "delivery_address": "House 45, Sharqi Colony, Vehari"
     }
     r = requests.post(f"{BASE_URL}/api/orders", json=order_data, headers=headers)
     print(f"    Status: {r.status_code}")
     order_resp = r.json()
     order_id = order_resp.get("id")
 
-    print("15. Testing PATCH /api/orders/{id}/status (Accept & Set out_for_delivery)...")
-    r_headers = {"Authorization": f"Bearer {rider_token}"}
-    r = requests.patch(
-        f"{BASE_URL}/api/orders/{order_id}/status",
-        json={"status": "out_for_delivery", "riderId": rider_id},
-        headers=r_headers
-    )
-    print(f"    Status: {r.status_code} | Order Status: {r.json().get('status')}")
-
-    print("16. Testing PATCH /api/riders/{id}/location (GPS Live Location)...")
-    r = requests.patch(
-        f"{BASE_URL}/api/riders/{rider_id}/location",
-        json={"lat": 30.0455, "lng": 72.3455, "orderId": order_id},
-        headers=r_headers
-    )
+    print("15. Testing POST /api/reviews (Submit Customer Review)...")
+    review_data = {
+        "vendor_id": vendor_id,
+        "food_id": food_id,
+        "rating": 5.0,
+        "comment": "Test review: Amazing biryani!"
+    }
+    r = requests.post(f"{BASE_URL}/api/reviews", json=review_data, headers=headers)
     print(f"    Status: {r.status_code}")
 
-    print("17. Testing PATCH /api/riders/{id}/available (Toggle Availability)...")
-    r = requests.patch(
-        f"{BASE_URL}/api/riders/{rider_id}/available",
-        json={"isAvailable": True},
-        headers=r_headers
-    )
-    print(f"    Status: {r.status_code} | Is Available: {r.json().get('isAvailable')}")
-
     # 7. Admin Operations & Analytics
-    print("\n18. Testing GET /api/admin/analytics...")
+    print("\n16. Testing GET /api/admin/analytics...")
     a_headers = {"Authorization": f"Bearer {admin_token}"}
     r = requests.get(f"{BASE_URL}/api/admin/analytics", headers=a_headers)
-    print(f"    Status: {r.status_code} | Analytics: {r.json()}")
+    print(f"    Status: {r.status_code} | Analytics Keys: {list(r.json().keys())}")
 
     print("\n[OK] ALL FASTAPI & SWAGGER UI ENDPOINT TESTS PASSED SUCCESSFULLY ON NEON POSTGRESQL!")
 

@@ -1,134 +1,144 @@
 from fastapi import HTTPException, status
-from sqlalchemy import select, update
-from database import AsyncSessionLocal, serialize_doc
-from middleware.auth import hash_password, create_access_token
-from models.vendor_model import VendorRegister, VendorUpdate, VendorStatusUpdate
-from orm_models import Vendor, User, Food
+from database import SyncSessionLocal, serialize_doc
+from middleware.auth_middleware import hash_password, create_access_token
+from schemas.vendor import VendorRegister, VendorUpdate, VendorStatusUpdate
+from models.vendor import Vendor
+from models.user import User
+from models.food import Food
 
 async def get_all_vendors():
+    session = SyncSessionLocal()
     try:
-        async with AsyncSessionLocal() as session:
-            res = await session.execute(select(Vendor).where(Vendor.is_active == True))
-            vendors = res.scalars().all()
-            serialized = serialize_doc(list(vendors))
-            for v in serialized:
-                v.pop("password", None)
-            return serialized
+        vendors = session.query(Vendor).filter(Vendor.is_approved == True).all()
+        serialized = serialize_doc(vendors)
+        for v in serialized:
+            v.pop("password", None)
+        return serialized
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch vendors: {str(e)}"
         )
+    finally:
+        session.close()
 
-async def get_vendor_by_id(vendor_id: str):
-    async with AsyncSessionLocal() as session:
-        res = await session.execute(select(Vendor).where(Vendor.id == str(vendor_id)))
-        vendor = res.scalar_one_or_none()
+async def get_vendor_by_id(vendor_id: int):
+    session = SyncSessionLocal()
+    try:
+        vendor = session.query(Vendor).filter(Vendor.id == vendor_id).first()
         if not vendor:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vendor not found")
 
         serialized = serialize_doc(vendor)
         serialized.pop("password", None)
         return serialized
+    finally:
+        session.close()
 
 async def register_vendor(data: VendorRegister):
+    session = SyncSessionLocal()
     try:
         email_clean = data.email.lower()
-        async with AsyncSessionLocal() as session:
-            res_v = await session.execute(select(Vendor).where(Vendor.email == email_clean))
-            res_u = await session.execute(select(User).where(User.email == email_clean))
-            if res_v.scalar_one_or_none() or res_u.scalar_one_or_none():
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email is already in use")
+        if session.query(Vendor).filter(Vendor.email == email_clean).first() or \
+           session.query(User).filter(User.email == email_clean).first():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email is already in use")
 
-            hashed_pw = hash_password(data.password)
-            vendor_obj = Vendor(
-                name=data.name,
-                email=email_clean,
-                password=hashed_pw,
-                city=data.city or "Vehari",
-                phone=data.phone,
-                category=data.category or "Pakistani",
-                cuisine=data.cuisine or "General",
-                address=data.address or "Vehari, Pakistan",
-                status="open",
-                rating=4.5,
-                is_active=True,
-                is_approved=True,
-                logo="",
-                cover_image=""
-            )
+        hashed_pw = hash_password(data.password)
+        cat_str = data.category.value if hasattr(data.category, "value") else str(data.category or "restaurant")
 
-            session.add(vendor_obj)
-            await session.commit()
-            await session.refresh(vendor_obj)
+        vendor_obj = Vendor(
+            name=data.name,
+            email=email_clean,
+            password=hashed_pw,
+            city=data.city or "Vehari",
+            phone=data.phone,
+            category=cat_str,
+            status="open",
+            rating=4.5,
+            is_approved=True
+        )
 
-            serialized = serialize_doc(vendor_obj)
-            serialized.pop("password", None)
+        session.add(vendor_obj)
+        session.commit()
+        session.refresh(vendor_obj)
 
-            token = create_access_token({"id": serialized["id"], "role": "vendor"})
+        serialized = serialize_doc(vendor_obj)
+        serialized.pop("password", None)
 
-            return {
-                "token": token,
-                "role": "vendor",
-                "vendor": serialized
-            }
+        token = create_access_token({"id": serialized["id"], "role": "vendor"})
+
+        return {
+            "token": token,
+            "role": "vendor",
+            "vendor": serialized
+        }
     except HTTPException:
         raise
     except Exception as e:
+        session.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Vendor registration failed: {str(e)}"
         )
+    finally:
+        session.close()
 
-async def update_vendor(vendor_id: str, data: VendorUpdate, current_user: dict):
-    if current_user.get("role") != "admin" and current_user.get("id") != str(vendor_id):
+async def update_vendor(vendor_id: int, data: VendorUpdate, current_user: dict):
+    if current_user.get("role") != "admin" and current_user.get("id") != vendor_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized to update vendor profile")
 
-    async with AsyncSessionLocal() as session:
-        res = await session.execute(select(Vendor).where(Vendor.id == str(vendor_id)))
-        vendor = res.scalar_one_or_none()
+    session = SyncSessionLocal()
+    try:
+        vendor = session.query(Vendor).filter(Vendor.id == vendor_id).first()
         if not vendor:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vendor not found")
 
         update_dict = {k: v for k, v in data.dict(exclude_unset=True).items() if v is not None}
         for k, v in update_dict.items():
+            if k == "category" and hasattr(v, "value"):
+                v = v.value
             if hasattr(vendor, k):
                 setattr(vendor, k, v)
 
-        await session.commit()
-        await session.refresh(vendor)
+        session.commit()
+        session.refresh(vendor)
 
         serialized = serialize_doc(vendor)
         serialized.pop("password", None)
         return serialized
+    finally:
+        session.close()
 
-async def get_vendor_menu(vendor_id: str):
+async def get_vendor_menu(vendor_id: int):
+    session = SyncSessionLocal()
     try:
-        async with AsyncSessionLocal() as session:
-            res = await session.execute(select(Food).where(Food.vendor_id == str(vendor_id)))
-            foods = res.scalars().all()
-            return serialize_doc(list(foods))
+        foods = session.query(Food).filter(Food.vendor_id == vendor_id).all()
+        return serialize_doc(foods)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch vendor menu: {str(e)}"
         )
+    finally:
+        session.close()
 
-async def update_vendor_status(vendor_id: str, data: VendorStatusUpdate, current_user: dict):
-    if current_user.get("role") != "admin" and current_user.get("id") != str(vendor_id):
+async def update_vendor_status(vendor_id: int, data: VendorStatusUpdate, current_user: dict):
+    if current_user.get("role") != "admin" and current_user.get("id") != vendor_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized to update vendor status")
 
     status_val = data.status.value if hasattr(data.status, "value") else str(data.status)
-    async with AsyncSessionLocal() as session:
-        res = await session.execute(select(Vendor).where(Vendor.id == str(vendor_id)))
-        vendor = res.scalar_one_or_none()
+    session = SyncSessionLocal()
+    try:
+        vendor = session.query(Vendor).filter(Vendor.id == vendor_id).first()
         if not vendor:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vendor not found")
 
         vendor.status = status_val
-        await session.commit()
-        await session.refresh(vendor)
+        session.commit()
+        session.refresh(vendor)
 
         serialized = serialize_doc(vendor)
         serialized.pop("password", None)
         return serialized
+    finally:
+        session.close()
