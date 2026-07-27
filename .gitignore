@@ -4,3 +4,5 @@ firebase-service-account.json
 *.log
 __pycache__/
 *.pyc
+
+.vercel

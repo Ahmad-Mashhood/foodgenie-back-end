@@ -10,19 +10,33 @@ from models.vendor import Vendor
 from models.rider import Rider
 
 # Initialize Firebase Admin SDK once
-service_account_path = 'firebase-service-account.json'
+service_account_paths = [
+    'firebase-service-account.json',
+    'firebase-service-account.json.json',
+    os.path.join(os.path.dirname(__file__), '..', 'firebase-service-account.json'),
+    os.path.join(os.path.dirname(__file__), '..', 'firebase-service-account.json.json')
+]
+
+service_account_found = None
+for path in service_account_paths:
+    if os.path.exists(path):
+        service_account_found = path
+        break
+
 if not firebase_admin._apps:
-    if os.path.exists(service_account_path):
+    if service_account_found:
         try:
-            cred = credentials.Certificate(service_account_path)
+            cred = credentials.Certificate(service_account_found)
             firebase_admin.initialize_app(cred)
+            print(f"[SUCCESS] Firebase Admin initialized with certificate: {service_account_found}")
         except Exception as e:
             print(f"[WARNING] Firebase Admin cert init warning: {e}")
     else:
         try:
             firebase_admin.initialize_app()
+            print("[NOTE] Firebase Admin initialized without service account certificate.")
         except Exception as e:
-            print(f"[NOTE] Firebase Admin initialized without service account: {e}")
+            print(f"[NOTE] Firebase Admin init note: {e}")
 
 async def register_user(data: UserRegister):
     session = SyncSessionLocal()
