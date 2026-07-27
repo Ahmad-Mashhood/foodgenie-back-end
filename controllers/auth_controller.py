@@ -1,3 +1,6 @@
+import os
+import firebase_admin
+from firebase_admin import credentials, auth as firebase_auth
 from fastapi import HTTPException, status
 from database import SyncSessionLocal, serialize_doc
 from middleware.auth_middleware import hash_password, verify_password, create_access_token
@@ -5,6 +8,21 @@ from schemas.user import UserRegister, UserLogin
 from models.user import User
 from models.vendor import Vendor
 from models.rider import Rider
+
+# Initialize Firebase Admin SDK once
+service_account_path = 'firebase-service-account.json'
+if not firebase_admin._apps:
+    if os.path.exists(service_account_path):
+        try:
+            cred = credentials.Certificate(service_account_path)
+            firebase_admin.initialize_app(cred)
+        except Exception as e:
+            print(f"[WARNING] Firebase Admin cert init warning: {e}")
+    else:
+        try:
+            firebase_admin.initialize_app()
+        except Exception as e:
+            print(f"[NOTE] Firebase Admin initialized without service account: {e}")
 
 async def register_user(data: UserRegister):
     session = SyncSessionLocal()
@@ -131,6 +149,112 @@ async def login_user(data: UserLogin):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Login failed: {str(e)}"
+        )
+    finally:
+        session.close()
+
+async def google_login(token: str, role: str):
+    session = SyncSessionLocal()
+    try:
+        email = None
+        name = "Google User"
+
+        # Step 1 Verify Firebase token
+        try:
+            decoded = firebase_auth.verify_id_token(token)
+            email = decoded.get('email')
+            name = decoded.get('name', 'Google User')
+        except Exception as ver_err:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Invalid Google token: {str(ver_err)}"
+            )
+
+        if not email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email not found in Google token"
+            )
+
+        email_clean = email.lower()
+
+        # Step 2 Check if user exists in User, Vendor, or Rider
+        account = session.query(User).filter(User.email == email_clean).first()
+        user_role = account.role if account else None
+
+        if not account:
+            account = session.query(Vendor).filter(Vendor.email == email_clean).first()
+            if account:
+                user_role = "vendor"
+
+        if not account:
+            account = session.query(Rider).filter(Rider.email == email_clean).first()
+            if account:
+                user_role = "rider"
+
+        # Step 3 Create user if not exists
+        if not account:
+            user_role = role if role in ["customer", "vendor", "rider", "admin"] else "customer"
+            dummy_password = hash_password("GOOGLE_AUTH_NO_PASSWORD")
+
+            if user_role == "vendor":
+                account = Vendor(
+                    name=name,
+                    email=email_clean,
+                    password=dummy_password,
+                    city="Vehari",
+                    category="restaurant",
+                    status="open",
+                    rating=5.0,
+                    is_approved=True
+                )
+            elif user_role == "rider":
+                account = Rider(
+                    name=name,
+                    email=email_clean,
+                    password=dummy_password,
+                    phone="",
+                    is_available=True,
+                    latitude=30.0440,
+                    longitude=72.3440
+                )
+            else:
+                account = User(
+                    name=name,
+                    email=email_clean,
+                    password=dummy_password,
+                    role=user_role
+                )
+
+            session.add(account)
+            session.commit()
+            session.refresh(account)
+
+        serialized_acc = serialize_doc(account)
+        serialized_acc.pop("password", None)
+        serialized_acc["role"] = user_role
+
+        # Step 4 Generate JWT token
+        jwt_token = create_access_token({
+            "id": serialized_acc["id"],
+            "role": user_role
+        })
+
+        # Step 5 Return response
+        return {
+            "token": jwt_token,
+            "role": user_role,
+            "user": serialized_acc,
+            "message": "Google login successful"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Google login failed: {str(e)}"
         )
     finally:
         session.close()

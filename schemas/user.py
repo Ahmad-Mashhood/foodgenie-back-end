@@ -6,6 +6,7 @@ class UserRole(str, Enum):
     CUSTOMER = "customer"
     RIDER = "rider"
     ADMIN = "admin"
+    VENDOR = "vendor"
 
 class UserRegister(BaseModel):
     name: str = Field(..., example="Ahmad Mashhood")
@@ -17,6 +18,10 @@ class UserRegister(BaseModel):
 class UserLogin(BaseModel):
     email: EmailStr = Field(..., example="ahmad@example.com")
     password: str = Field(..., example="password123")
+
+class GoogleAuthRequest(BaseModel):
+    token: str
+    role: str = "customer"
 
 class UserResponse(BaseModel):
     id: int

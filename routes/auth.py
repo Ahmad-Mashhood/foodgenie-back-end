@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, status
 from middleware.auth_middleware import get_current_user
-from schemas.user import UserRegister, UserLogin, TokenResponse, UserResponse
+from schemas.user import UserRegister, UserLogin, TokenResponse, UserResponse, GoogleAuthRequest
 from controllers import auth_controller
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
@@ -24,6 +24,15 @@ async def register(data: UserRegister):
 )
 async def login(data: UserLogin):
     return await auth_controller.login_user(data)
+
+@router.post(
+    "/google",
+    status_code=status.HTTP_200_OK,
+    summary="Google Auth Login / Register",
+    description="Verifies Firebase Google ID token, logs in or registers user automatically with role, and returns JWT token."
+)
+async def google_auth(data: GoogleAuthRequest):
+    return await auth_controller.google_login(data.token, data.role)
 
 @router.get(
     "/me",
