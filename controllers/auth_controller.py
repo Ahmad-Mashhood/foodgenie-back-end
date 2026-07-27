@@ -1,4 +1,5 @@
 import os
+import json
 import firebase_admin
 from firebase_admin import credentials, auth as firebase_auth
 from fastapi import HTTPException, status
@@ -10,6 +11,7 @@ from models.vendor import Vendor
 from models.rider import Rider
 
 # Initialize Firebase Admin SDK once
+service_account_env = os.getenv('FIREBASE_SERVICE_ACCOUNT') or os.getenv('FIREBASE_CREDENTIALS')
 service_account_paths = [
     'firebase-service-account.json',
     'firebase-service-account.json.json',
@@ -17,26 +19,36 @@ service_account_paths = [
     os.path.join(os.path.dirname(__file__), '..', 'firebase-service-account.json.json')
 ]
 
-service_account_found = None
-for path in service_account_paths:
-    if os.path.exists(path):
-        service_account_found = path
-        break
-
 if not firebase_admin._apps:
-    if service_account_found:
+    initialized = False
+    if service_account_env:
         try:
-            cred = credentials.Certificate(service_account_found)
+            cert_dict = json.loads(service_account_env) if isinstance(service_account_env, str) else service_account_env
+            cred = credentials.Certificate(cert_dict)
             firebase_admin.initialize_app(cred)
-            print(f"[SUCCESS] Firebase Admin initialized with certificate: {service_account_found}")
+            initialized = True
+            print("[SUCCESS] Firebase Admin initialized with environment credentials.")
         except Exception as e:
-            print(f"[WARNING] Firebase Admin cert init warning: {e}")
-    else:
+            print(f"[WARNING] Env cert init error: {e}")
+
+    if not initialized:
+        for path in service_account_paths:
+            if os.path.exists(path):
+                try:
+                    cred = credentials.Certificate(path)
+                    firebase_admin.initialize_app(cred)
+                    initialized = True
+                    print(f"[SUCCESS] Firebase Admin initialized with file: {path}")
+                    break
+                except Exception as e:
+                    print(f"[WARNING] File cert init error: {e}")
+
+    if not initialized:
         try:
             firebase_admin.initialize_app()
-            print("[NOTE] Firebase Admin initialized without service account certificate.")
+            print("[NOTE] Firebase Admin initialized with default app.")
         except Exception as e:
-            print(f"[NOTE] Firebase Admin init note: {e}")
+            print(f"[NOTE] Default init warning: {e}")
 
 async def register_user(data: UserRegister):
     session = SyncSessionLocal()
