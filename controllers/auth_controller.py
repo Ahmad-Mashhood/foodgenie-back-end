@@ -179,17 +179,26 @@ async def login_user(data: UserLogin):
     finally:
         session.close()
 
-async def google_login(token: str, role: str):
+async def google_login(
+    token: str,
+    role: str = "customer",
+    phone: str = None,
+    city: str = None,
+    category: str = None,
+    password: str = None
+):
     session = SyncSessionLocal()
     try:
         email = None
         name = "Google User"
+        picture = None
 
         # Step 1 Verify Firebase token
         try:
             decoded = firebase_auth.verify_id_token(token)
             email = decoded.get('email')
             name = decoded.get('name', 'Google User')
+            picture = decoded.get('picture')
         except Exception as ver_err:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -218,18 +227,32 @@ async def google_login(token: str, role: str):
             if account:
                 user_role = "rider"
 
+        # If vendor registration & account does not exist yet, prompt for onboarding details if missing
+        if not account and role == "vendor":
+            if not phone or not category or not password:
+                return {
+                    "requires_details": True,
+                    "google_profile": {
+                        "name": name,
+                        "email": email_clean,
+                        "photoURL": picture
+                    },
+                    "message": "Vendor registration requires additional phone, category, and password"
+                }
+
         # Step 3 Create user if not exists
         if not account:
             user_role = role if role in ["customer", "vendor", "rider", "admin"] else "customer"
-            dummy_password = hash_password("GOOGLE_AUTH_NO_PASSWORD")
+            account_password = hash_password(password) if password else hash_password("GOOGLE_AUTH_NO_PASSWORD")
 
             if user_role == "vendor":
                 account = Vendor(
                     name=name,
                     email=email_clean,
-                    password=dummy_password,
-                    city="Vehari",
-                    category="restaurant",
+                    password=account_password,
+                    phone=phone or "",
+                    city=city or "Vehari",
+                    category=category or "Fast Food",
                     status="open",
                     rating=5.0,
                     is_approved=True
@@ -238,8 +261,8 @@ async def google_login(token: str, role: str):
                 account = Rider(
                     name=name,
                     email=email_clean,
-                    password=dummy_password,
-                    phone="",
+                    password=account_password,
+                    phone=phone or "",
                     is_available=True,
                     latitude=30.0440,
                     longitude=72.3440
@@ -248,7 +271,8 @@ async def google_login(token: str, role: str):
                 account = User(
                     name=name,
                     email=email_clean,
-                    password=dummy_password,
+                    password=account_password,
+                    phone=phone or "",
                     role=user_role
                 )
 
@@ -258,6 +282,8 @@ async def google_login(token: str, role: str):
 
         serialized_acc = serialize_doc(account)
         serialized_acc.pop("password", None)
+        if picture:
+            serialized_acc["photoURL"] = picture
         serialized_acc["role"] = user_role
 
         # Step 4 Generate JWT token
@@ -271,6 +297,7 @@ async def google_login(token: str, role: str):
             "token": jwt_token,
             "role": user_role,
             "user": serialized_acc,
+            "vendor": serialized_acc if user_role == "vendor" else None,
             "message": "Google login successful"
         }
 

@@ -22,6 +22,10 @@ class UserLogin(BaseModel):
 class GoogleAuthRequest(BaseModel):
     token: str
     role: str = "customer"
+    phone: Optional[str] = None
+    city: Optional[str] = None
+    category: Optional[str] = None
+    password: Optional[str] = None
 
 class UserResponse(BaseModel):
     id: int

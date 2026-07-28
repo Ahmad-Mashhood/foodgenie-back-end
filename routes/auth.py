@@ -32,7 +32,14 @@ async def login(data: UserLogin):
     description="Verifies Firebase Google ID token, logs in or registers user automatically with role, and returns JWT token."
 )
 async def google_auth(data: GoogleAuthRequest):
-    return await auth_controller.google_login(data.token, data.role)
+    return await auth_controller.google_login(
+        token=data.token,
+        role=data.role,
+        phone=data.phone,
+        city=data.city,
+        category=data.category,
+        password=data.password
+    )
 
 @router.get(
     "/me",
