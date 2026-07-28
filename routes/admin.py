@@ -41,6 +41,19 @@ async def approve_vendor(
 ):
     return await admin_controller.approve_vendor(vendor_id)
 
+@router.patch(
+    "/vendors/{vendor_id}/reject",
+    response_model=VendorResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Reject Vendor Account (Admin Only)",
+    description="Sets vendor approval status to False."
+)
+async def reject_vendor(
+    vendor_id: int,
+    current_user: dict = Depends(require_roles(["admin"]))
+):
+    return await admin_controller.reject_vendor(vendor_id)
+
 @router.get(
     "/orders",
     response_model=List[OrderResponse],

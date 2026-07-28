@@ -37,6 +37,25 @@ async def approve_vendor(vendor_id: int):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vendor not found")
 
         vendor.is_approved = True
+        vendor.status = "open"
+        session.commit()
+        session.refresh(vendor)
+
+        serialized = serialize_doc(vendor)
+        serialized.pop("password", None)
+        return serialized
+    finally:
+        session.close()
+
+async def reject_vendor(vendor_id: int):
+    session = SyncSessionLocal()
+    try:
+        vendor = session.query(Vendor).filter(Vendor.id == vendor_id).first()
+        if not vendor:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vendor not found")
+
+        vendor.is_approved = False
+        vendor.status = "rejected"
         session.commit()
         session.refresh(vendor)
 
