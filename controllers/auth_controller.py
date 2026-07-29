@@ -74,6 +74,7 @@ async def register_user(data: UserRegister):
                 password=hashed_pw,
                 phone=data.phone,
                 is_available=True,
+                is_approved=False,
                 latitude=30.0440,
                 longitude=72.3440
             )
@@ -227,7 +228,7 @@ async def google_login(
             if account:
                 user_role = "rider"
 
-        # If vendor registration & account does not exist yet, prompt for onboarding details if missing
+        # If vendor or rider registration & account does not exist yet, prompt for onboarding details if missing
         if not account and role == "vendor":
             if not phone or not category or not password:
                 return {
@@ -238,6 +239,18 @@ async def google_login(
                         "photoURL": picture
                     },
                     "message": "Vendor registration requires additional phone, category, and password"
+                }
+
+        if not account and role == "rider":
+            if not phone or not password:
+                return {
+                    "requires_details": True,
+                    "google_profile": {
+                        "name": name,
+                        "email": email_clean,
+                        "photoURL": picture
+                    },
+                    "message": "Rider registration requires additional phone and password"
                 }
 
         # Step 3 Create user if not exists
@@ -253,9 +266,9 @@ async def google_login(
                     phone=phone or "",
                     city=city or "Vehari",
                     category=category or "Fast Food",
-                    status="open",
+                    status="pending",
                     rating=5.0,
-                    is_approved=True
+                    is_approved=False
                 )
             elif user_role == "rider":
                 account = Rider(
@@ -264,6 +277,7 @@ async def google_login(
                     password=account_password,
                     phone=phone or "",
                     is_available=True,
+                    is_approved=False,
                     latitude=30.0440,
                     longitude=72.3440
                 )
