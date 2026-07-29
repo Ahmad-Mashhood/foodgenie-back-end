@@ -65,6 +65,54 @@ async def reject_vendor(vendor_id: int):
     finally:
         session.close()
 
+async def get_all_riders():
+    session = SyncSessionLocal()
+    try:
+        riders = session.query(Rider).order_by(Rider.created_at.desc()).all()
+        serialized = serialize_doc(riders)
+        for r in serialized:
+            r.pop("password", None)
+        return serialized
+    finally:
+        session.close()
+
+async def approve_rider(rider_id: int):
+    session = SyncSessionLocal()
+    try:
+        rider = session.query(Rider).filter(Rider.id == rider_id).first()
+        if not rider:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rider not found")
+
+        rider.is_approved = True
+        rider.is_available = True
+        session.commit()
+        session.refresh(rider)
+
+        serialized = serialize_doc(rider)
+        serialized.pop("password", None)
+        return serialized
+    finally:
+        session.close()
+
+async def reject_rider(rider_id: int):
+    session = SyncSessionLocal()
+    try:
+        rider = session.query(Rider).filter(Rider.id == rider_id).first()
+        if not rider:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rider not found")
+
+        rider.is_approved = False
+        rider.is_available = False
+        session.commit()
+        session.refresh(rider)
+
+        serialized = serialize_doc(rider)
+        serialized.pop("password", None)
+        return serialized
+    finally:
+        session.close()
+
+
 async def get_all_orders():
     session = SyncSessionLocal()
     try:

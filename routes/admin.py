@@ -55,6 +55,39 @@ async def reject_vendor(
     return await admin_controller.reject_vendor(vendor_id)
 
 @router.get(
+    "/riders",
+    status_code=status.HTTP_200_OK,
+    summary="Get All Riders (Admin Only)",
+    description="Returns list of all registered riders."
+)
+async def get_all_riders(current_user: dict = Depends(require_roles(["admin"]))):
+    return await admin_controller.get_all_riders()
+
+@router.patch(
+    "/riders/{rider_id}/approve",
+    status_code=status.HTTP_200_OK,
+    summary="Approve Rider Account (Admin Only)",
+    description="Sets rider approval status to True."
+)
+async def approve_rider(
+    rider_id: int,
+    current_user: dict = Depends(require_roles(["admin"]))
+):
+    return await admin_controller.approve_rider(rider_id)
+
+@router.patch(
+    "/riders/{rider_id}/reject",
+    status_code=status.HTTP_200_OK,
+    summary="Reject Rider Account (Admin Only)",
+    description="Sets rider approval status to False."
+)
+async def reject_rider(
+    rider_id: int,
+    current_user: dict = Depends(require_roles(["admin"]))
+):
+    return await admin_controller.reject_rider(rider_id)
+
+@router.get(
     "/orders",
     response_model=List[OrderResponse],
     status_code=status.HTTP_200_OK,

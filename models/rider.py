@@ -12,6 +12,7 @@ class Rider(Base):
     password = Column(String(255), nullable=False)
     phone = Column(String(50), nullable=True)
     is_available = Column(Boolean, default=True)
+    is_approved = Column(Boolean, default=False)
     latitude = Column(Float, nullable=True, default=30.0440)
     longitude = Column(Float, nullable=True, default=72.3440)
     created_at = Column(DateTime, default=datetime.utcnow)

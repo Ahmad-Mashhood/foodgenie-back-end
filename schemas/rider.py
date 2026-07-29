@@ -18,5 +18,6 @@ class RiderResponse(BaseModel):
     email: str
     phone: Optional[str] = None
     is_available: bool = True
+    is_approved: bool = False
     latitude: Optional[float] = None
     longitude: Optional[float] = None
