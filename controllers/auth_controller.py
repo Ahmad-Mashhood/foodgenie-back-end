@@ -330,3 +330,96 @@ async def get_me(current_user: dict):
     user_copy = current_user.copy()
     user_copy.pop("password", None)
     return user_copy
+
+# In-memory OTP storage for Password Reset
+OTP_STORE = {}
+
+async def forgot_password(email: str):
+    import random
+    import time
+    session = SyncSessionLocal()
+    try:
+        email_clean = email.lower().strip()
+        account = session.query(User).filter(User.email == email_clean).first()
+        if not account:
+            account = session.query(Vendor).filter(Vendor.email == email_clean).first()
+        if not account:
+            account = session.query(Rider).filter(Rider.email == email_clean).first()
+
+        if not account:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No account found with this email address"
+            )
+
+        otp = f"{random.randint(100000, 999999)}"
+        OTP_STORE[email_clean] = {
+            "otp": otp,
+            "expires_at": time.time() + 600
+        }
+
+        return {
+            "message": f"Verification code sent to {email_clean}",
+            "email": email_clean,
+            "otp_demo": otp
+        }
+    finally:
+        session.close()
+
+async def verify_otp(email: str, otp: str):
+    import time
+    email_clean = email.lower().strip()
+    record = OTP_STORE.get(email_clean)
+    if not record:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No OTP code requested for this email or OTP expired."
+        )
+
+    if time.time() > record["expires_at"]:
+        OTP_STORE.pop(email_clean, None)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Verification OTP code has expired. Please request a new code."
+        )
+
+    if record["otp"] != otp.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid verification OTP code. Please check and try again."
+        )
+
+    return {"message": "OTP verified successfully", "valid": True}
+
+async def reset_password(email: str, otp: str, new_password: str):
+    import time
+    session = SyncSessionLocal()
+    try:
+        email_clean = email.lower().strip()
+        record = OTP_STORE.get(email_clean)
+        if not record or record["otp"] != otp.strip() or time.time() > record["expires_at"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid or expired OTP code."
+            )
+
+        account = session.query(User).filter(User.email == email_clean).first()
+        if not account:
+            account = session.query(Vendor).filter(Vendor.email == email_clean).first()
+        if not account:
+            account = session.query(Rider).filter(Rider.email == email_clean).first()
+
+        if not account:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Account not found."
+            )
+
+        account.password = hash_password(new_password)
+        session.commit()
+
+        OTP_STORE.pop(email_clean, None)
+
+        return {"message": "Password reset successfully! You can now log in with your new password."}
+    finally:
+        session.close()

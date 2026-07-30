@@ -39,3 +39,15 @@ class TokenResponse(BaseModel):
     role: str
     user: Optional[dict] = None
     vendor: Optional[dict] = None
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr = Field(..., example="user@example.com")
+
+class VerifyOtpRequest(BaseModel):
+    email: EmailStr = Field(..., example="user@example.com")
+    otp: str = Field(..., min_length=6, max_length=6, example="123456")
+
+class ResetPasswordRequest(BaseModel):
+    email: EmailStr = Field(..., example="user@example.com")
+    otp: str = Field(..., min_length=6, max_length=6, example="123456")
+    new_password: str = Field(..., min_length=6, example="newpassword123")

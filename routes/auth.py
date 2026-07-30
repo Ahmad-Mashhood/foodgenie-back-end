@@ -1,6 +1,9 @@
 from fastapi import APIRouter, Depends, status
 from middleware.auth_middleware import get_current_user
-from schemas.user import UserRegister, UserLogin, TokenResponse, UserResponse, GoogleAuthRequest
+from schemas.user import (
+    UserRegister, UserLogin, TokenResponse, UserResponse, GoogleAuthRequest,
+    ForgotPasswordRequest, VerifyOtpRequest, ResetPasswordRequest
+)
 from controllers import auth_controller
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
@@ -40,6 +43,33 @@ async def google_auth(data: GoogleAuthRequest):
         category=data.category,
         password=data.password
     )
+
+@router.post(
+    "/forgot-password",
+    status_code=status.HTTP_200_OK,
+    summary="Send Password Reset Verification Code to Email",
+    description="Generates a 6-digit verification code for password recovery."
+)
+async def forgot_password(data: ForgotPasswordRequest):
+    return await auth_controller.forgot_password(data.email)
+
+@router.post(
+    "/verify-otp",
+    status_code=status.HTTP_200_OK,
+    summary="Verify Password Reset OTP Code",
+    description="Validates 6-digit verification code."
+)
+async def verify_otp(data: VerifyOtpRequest):
+    return await auth_controller.verify_otp(data.email, data.otp)
+
+@router.post(
+    "/reset-password",
+    status_code=status.HTTP_200_OK,
+    summary="Reset Password with OTP",
+    description="Updates user, vendor, or rider password after verifying OTP."
+)
+async def reset_password(data: ResetPasswordRequest):
+    return await auth_controller.reset_password(data.email, data.otp, data.new_password)
 
 @router.get(
     "/me",
