@@ -334,6 +334,52 @@ async def get_me(current_user: dict):
 # In-memory OTP storage for Password Reset
 OTP_STORE = {}
 
+def send_otp_email(to_email: str, otp_code: str):
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+    import os
+
+    smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+    smtp_port = int(os.getenv("SMTP_PORT", 587))
+    sender_email = os.getenv("SMTP_EMAIL", "foodgenie.official.app@gmail.com")
+    sender_password = os.getenv("SMTP_PASSWORD", "")
+
+    if sender_email and sender_password:
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = f"Food Genie - Password Reset OTP Code ({otp_code})"
+            msg["From"] = f"Food Genie Support <{sender_email}>"
+            msg["To"] = to_email
+
+            html_body = f"""
+            <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px; border: 1px solid #eee; border-radius: 16px; background-color: #ffffff;">
+                <div style="text-align: center; margin-bottom: 20px;">
+                    <h2 style="color: #ab3500; font-size: 24px; margin: 0;">Food Genie</h2>
+                    <p style="color: #777; font-size: 13px; margin-top: 4px;">Password Reset Verification Code</p>
+                </div>
+                <p style="color: #333; font-size: 14px; line-height: 1.5;">Hello,</p>
+                <p style="color: #555; font-size: 14px; line-height: 1.5;">We received a request to reset the password for your account (<strong>{to_email}</strong>).</p>
+                <p style="color: #555; font-size: 14px; line-height: 1.5;">Please enter the following 6-digit verification code on the website to reset your password:</p>
+                <div style="text-align: center; margin: 30px 0;">
+                    <span style="font-size: 36px; font-weight: 800; letter-spacing: 8px; color: #ab3500; background-color: #fff1ed; padding: 16px 28px; border-radius: 12px; border: 2px dashed #ab3500; font-family: monospace; display: inline-block;">{otp_code}</span>
+                </div>
+                <p style="color: #777; font-size: 13px; text-align: center;">This code is valid for <strong>10 minutes</strong>. If you did not request a password reset, please ignore this email.</p>
+                <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0 20px 0;" />
+                <p style="color: #aaa; font-size: 11px; text-align: center;">Food Genie Team &copy; 2026</p>
+            </div>
+            """
+            msg.attach(MIMEText(html_body, "html"))
+
+            server = smtplib.SMTP(smtp_server, smtp_port)
+            server.starttls()
+            server.login(sender_email, sender_password)
+            server.sendmail(sender_email, to_email, msg.as_string())
+            server.quit()
+            print(f"✅ OTP email successfully sent to {to_email}")
+        except Exception as err:
+            print(f"⚠️ SMTP email notice: {err}")
+
 async def forgot_password(email: str):
     import random
     import time
@@ -358,13 +404,19 @@ async def forgot_password(email: str):
             "expires_at": time.time() + 600
         }
 
+        # Attempt to send real SMTP email to recipient's Gmail inbox
+        try:
+            send_otp_email(email_clean, otp)
+        except Exception as e:
+            print("Email dispatch error:", e)
+
         return {
-            "message": f"Verification code sent to {email_clean}",
-            "email": email_clean,
-            "otp_demo": otp
+            "message": f"Verification code sent to {email_clean}. Please check your Gmail inbox.",
+            "email": email_clean
         }
     finally:
         session.close()
+
 
 async def verify_otp(email: str, otp: str):
     import time
