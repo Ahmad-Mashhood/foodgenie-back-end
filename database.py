@@ -35,9 +35,16 @@ AsyncSessionLocal = async_sessionmaker(bind=async_engine, class_=AsyncSession, e
 
 def init_sync_db():
     Base.metadata.create_all(bind=engine)
+    try:
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE riders ADD COLUMN IF NOT EXISTS is_approved BOOLEAN DEFAULT FALSE;"))
+            conn.commit()
+    except Exception as e:
+        print(f"[DB MIGRATION WARNING] {e}")
 
 async def init_db():
-    Base.metadata.create_all(bind=engine)
+    init_sync_db()
 
 def get_db():
     db = SyncSessionLocal()
