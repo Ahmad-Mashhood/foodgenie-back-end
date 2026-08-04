@@ -129,8 +129,9 @@ async def register_user(data: UserRegister):
 async def login_user(data: UserLogin):
     session = SyncSessionLocal()
     try:
-        email_clean = data.email.lower()
-        
+        email_clean = data.email.lower().strip()
+        password_clean = data.password.strip() if data.password else ""
+
         # 1. Check users
         account = session.query(User).filter(User.email == email_clean).first()
         role = account.role if account else None
@@ -150,7 +151,7 @@ async def login_user(data: UserLogin):
                 role = "rider"
                 acc_type = "user"
 
-        if not account or not verify_password(data.password, account.password):
+        if not account or not verify_password(password_clean, account.password):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid email or password"
@@ -179,6 +180,7 @@ async def login_user(data: UserLogin):
         )
     finally:
         session.close()
+
 
 async def google_login(
     token: str,
@@ -475,3 +477,60 @@ async def reset_password(email: str, otp: str, new_password: str):
         return {"message": "Password reset successfully! You can now log in with your new password."}
     finally:
         session.close()
+
+async def update_profile(current_user: dict, data: dict):
+    session = SyncSessionLocal()
+    try:
+        user_id = current_user.get("id")
+        user_role = current_user.get("role")
+
+        account = None
+        if user_role in ["customer", "admin"]:
+            account = session.query(User).filter(User.id == user_id).first()
+        elif user_role == "vendor":
+            account = session.query(Vendor).filter(Vendor.id == user_id).first()
+        elif user_role == "rider":
+            account = session.query(Rider).filter(Rider.id == user_id).first()
+
+        if not account:
+            account = session.query(User).filter(User.id == user_id).first()
+
+        if not account:
+            raise HTTPException(status_code=404, detail="User account not found")
+
+        if "name" in data and data["name"]:
+            account.name = str(data["name"]).strip()
+
+        if "email" in data and data["email"]:
+            new_email = str(data["email"]).lower().strip()
+            if new_email != account.email:
+                existing = session.query(User).filter(User.email == new_email).first() or \
+                           session.query(Vendor).filter(Vendor.email == new_email).first() or \
+                           session.query(Rider).filter(Rider.email == new_email).first()
+                if existing and existing.id != account.id:
+                    raise HTTPException(status_code=400, detail="Email is already in use by another account")
+                account.email = new_email
+
+        if "phone" in data and data["phone"]:
+            account.phone = str(data["phone"]).strip()
+
+        if "password" in data and data["password"]:
+            account.password = hash_password(str(data["password"]).strip())
+
+        session.commit()
+        session.refresh(account)
+
+        serialized_acc = serialize_doc(account)
+        serialized_acc.pop("password", None)
+        serialized_acc["role"] = user_role
+
+        new_token = create_access_token({"id": account.id, "role": user_role})
+
+        return {
+            "message": "Profile updated successfully",
+            "user": serialized_acc,
+            "token": new_token
+        }
+    finally:
+        session.close()
+

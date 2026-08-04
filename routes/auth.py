@@ -79,3 +79,16 @@ async def reset_password(data: ResetPasswordRequest):
 )
 async def get_me(current_user: dict = Depends(get_current_user)):
     return await auth_controller.get_me(current_user)
+
+@router.put(
+    "/profile",
+    status_code=status.HTTP_200_OK,
+    summary="Update Logged In User Profile & Credentials",
+    description="Updates email, name, phone, or password in database for current account."
+)
+async def update_profile(
+    data: dict,
+    current_user: dict = Depends(get_current_user)
+):
+    return await auth_controller.update_profile(current_user, data)
+
