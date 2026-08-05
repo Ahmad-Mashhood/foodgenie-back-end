@@ -47,11 +47,12 @@ async def google_auth(data: GoogleAuthRequest):
 @router.post(
     "/forgot-password",
     status_code=status.HTTP_200_OK,
-    summary="Send Password Reset Verification Code to Email",
-    description="Generates a 6-digit verification code for password recovery."
+    tags=["Authentication"],
+    summary="Forgot Password - Send Reset Email",
+    description="Send password reset link to user email address"
 )
 async def forgot_password(data: ForgotPasswordRequest):
-    return await auth_controller.forgot_password(data.email)
+    return await auth_controller.forgot_password(data.email, getattr(data, "frontend_url", None))
 
 @router.post(
     "/verify-otp",
@@ -65,11 +66,18 @@ async def verify_otp(data: VerifyOtpRequest):
 @router.post(
     "/reset-password",
     status_code=status.HTTP_200_OK,
-    summary="Reset Password with OTP",
-    description="Updates user, vendor, or rider password after verifying OTP."
+    tags=["Authentication"],
+    summary="Reset Password",
+    description="Reset user password using token from email"
 )
 async def reset_password(data: ResetPasswordRequest):
-    return await auth_controller.reset_password(data.email, data.otp, data.new_password)
+    return await auth_controller.reset_password(
+        new_password=data.new_password,
+        token=data.token,
+        email=data.email,
+        otp=data.otp
+    )
+
 
 @router.get(
     "/me",

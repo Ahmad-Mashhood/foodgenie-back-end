@@ -13,9 +13,11 @@ class Rider(Base):
     phone = Column(String(50), nullable=True)
     is_available = Column(Boolean, default=True)
     is_approved = Column(Boolean, default=False)
-    latitude = Column(Float, nullable=True, default=30.0440)
     longitude = Column(Float, nullable=True, default=72.3440)
+    reset_token = Column(String(500), nullable=True, default=None)
+    reset_token_expires_at = Column(DateTime, nullable=True, default=None)
     created_at = Column(DateTime, default=datetime.utcnow)
+
 
     # Relationships
     orders = relationship("Order", back_populates="rider")

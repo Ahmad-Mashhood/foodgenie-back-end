@@ -11,8 +11,10 @@ class User(Base):
     email = Column(String(255), unique=True, index=True, nullable=False)
     password = Column(String(255), nullable=False)
     role = Column(String(50), nullable=False, default="customer")
-    phone = Column(String(50), nullable=True)
+    reset_token = Column(String(500), nullable=True, default=None)
+    reset_token_expires_at = Column(DateTime, nullable=True, default=None)
     created_at = Column(DateTime, default=datetime.utcnow)
+
 
     # Relationships
     orders = relationship("Order", foreign_keys="Order.customer_id", back_populates="customer")

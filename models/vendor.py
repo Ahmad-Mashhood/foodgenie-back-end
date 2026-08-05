@@ -14,9 +14,11 @@ class Vendor(Base):
     phone = Column(String(50), nullable=True)
     category = Column(String(100), default="restaurant")
     status = Column(String(50), default="open")
-    rating = Column(Float, default=0.0)
     is_approved = Column(Boolean, default=False)
+    reset_token = Column(String(500), nullable=True, default=None)
+    reset_token_expires_at = Column(DateTime, nullable=True, default=None)
     created_at = Column(DateTime, default=datetime.utcnow)
+
 
     # Relationships
     foods = relationship("Food", back_populates="vendor", cascade="all, delete-orphan")

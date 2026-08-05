@@ -382,9 +382,13 @@ def send_otp_email(to_email: str, otp_code: str):
         except Exception as err:
             print(f"⚠️ SMTP email notice: {err}")
 
-async def forgot_password(email: str):
+async def forgot_password(email: str, frontend_url: str = None):
+    import secrets
     import random
     import time
+    from datetime import datetime, timedelta
+    from utils.email import send_reset_email
+
     session = SyncSessionLocal()
     try:
         email_clean = email.lower().strip()
@@ -395,27 +399,37 @@ async def forgot_password(email: str):
             account = session.query(Rider).filter(Rider.email == email_clean).first()
 
         if not account:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No account found with this email address"
-            )
+            return {
+                "message": "If this email is registered you will receive a password reset link shortly"
+            }
+
+        token = secrets.token_urlsafe(32)
+        expiry = datetime.utcnow() + timedelta(minutes=30)
+
+        account.reset_token = token
+        account.reset_token_expires_at = expiry
+        session.commit()
 
         otp = f"{random.randint(100000, 999999)}"
         OTP_STORE[email_clean] = {
             "otp": otp,
-            "expires_at": time.time() + 600
+            "expires_at": time.time() + 1800
         }
 
-        # Attempt to send real SMTP email to recipient's Gmail inbox
         try:
-            send_otp_email(email_clean, otp)
+            send_reset_email(account.email, token, frontend_url)
         except Exception as e:
             print("Email dispatch error:", e)
 
         return {
-            "message": f"Verification code sent to {email_clean}. Please check your Gmail inbox.",
-            "email": email_clean
+            "message": "Password reset link sent to your email address"
         }
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error sending reset email: {str(e)}"
+        )
     finally:
         session.close()
 
@@ -445,38 +459,71 @@ async def verify_otp(email: str, otp: str):
 
     return {"message": "OTP verified successfully", "valid": True}
 
-async def reset_password(email: str, otp: str, new_password: str):
+async def reset_password(new_password: str, token: str = None, email: str = None, otp: str = None):
     import time
+    from datetime import datetime
+
     session = SyncSessionLocal()
     try:
-        email_clean = email.lower().strip()
-        record = OTP_STORE.get(email_clean)
-        if not record or record["otp"] != otp.strip() or time.time() > record["expires_at"]:
+        account = None
+        if token:
+            token_clean = token.strip()
+            account = session.query(User).filter(User.reset_token == token_clean).first()
+            if not account:
+                account = session.query(Vendor).filter(Vendor.reset_token == token_clean).first()
+            if not account:
+                account = session.query(Rider).filter(Rider.reset_token == token_clean).first()
+
+            if not account:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid or expired reset link. Please request a new one."
+                )
+
+            if account.reset_token_expires_at and datetime.utcnow() > account.reset_token_expires_at:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Reset link has expired. Please request a new password reset link."
+                )
+        elif email and otp:
+            email_clean = email.lower().strip()
+            record = OTP_STORE.get(email_clean)
+            if not record or record["otp"] != otp.strip() or time.time() > record["expires_at"]:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid or expired OTP code."
+                )
+            account = session.query(User).filter(User.email == email_clean).first() or \
+                      session.query(Vendor).filter(Vendor.email == email_clean).first() or \
+                      session.query(Rider).filter(Rider.email == email_clean).first()
+            if not account:
+                raise HTTPException(status_code=404, detail="Account not found.")
+        else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid or expired OTP code."
+                detail="Reset token or OTP verification details required."
             )
 
-        account = session.query(User).filter(User.email == email_clean).first()
-        if not account:
-            account = session.query(Vendor).filter(Vendor.email == email_clean).first()
-        if not account:
-            account = session.query(Rider).filter(Rider.email == email_clean).first()
-
-        if not account:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Account not found."
-            )
-
-        account.password = hash_password(new_password)
+        account.password = hash_password(new_password.strip())
+        account.reset_token = None
+        account.reset_token_expires_at = None
         session.commit()
 
-        OTP_STORE.pop(email_clean, None)
+        if email:
+            OTP_STORE.pop(email.lower().strip(), None)
 
-        return {"message": "Password reset successfully! You can now log in with your new password."}
+        return {"message": "Password reset successful! You can now login with your new password."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error resetting password: {str(e)}"
+        )
     finally:
         session.close()
+
 
 async def update_profile(current_user: dict, data: dict):
     session = SyncSessionLocal()

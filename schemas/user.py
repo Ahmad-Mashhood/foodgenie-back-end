@@ -41,13 +41,42 @@ class TokenResponse(BaseModel):
     vendor: Optional[dict] = None
 
 class ForgotPasswordRequest(BaseModel):
-    email: EmailStr = Field(..., example="user@example.com")
+    email: str
+    frontend_url: Optional[str] = None
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "email": "ahmad@gmail.com"
+            }
+        }
 
 class VerifyOtpRequest(BaseModel):
-    email: EmailStr = Field(..., example="user@example.com")
-    otp: str = Field(..., min_length=6, max_length=6, example="123456")
+    email: Optional[str] = None
+    otp: Optional[str] = None
 
 class ResetPasswordRequest(BaseModel):
-    email: EmailStr = Field(..., example="user@example.com")
-    otp: str = Field(..., min_length=6, max_length=6, example="123456")
-    new_password: str = Field(..., min_length=6, example="newpassword123")
+    token: Optional[str] = None
+    email: Optional[str] = None
+    otp: Optional[str] = None
+    new_password: str
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "token": "abc123defxyz...",
+                "new_password": "mynewpassword123"
+            }
+        }
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "old_password": "oldpass123",
+                "new_password": "newpass123"
+            }
+        }

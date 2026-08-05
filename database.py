@@ -39,9 +39,16 @@ def init_sync_db():
         from sqlalchemy import text
         with engine.connect() as conn:
             conn.execute(text("ALTER TABLE riders ADD COLUMN IF NOT EXISTS is_approved BOOLEAN DEFAULT FALSE;"))
+            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token VARCHAR(500);"))
+            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_expires_at TIMESTAMP;"))
+            conn.execute(text("ALTER TABLE vendors ADD COLUMN IF NOT EXISTS reset_token VARCHAR(500);"))
+            conn.execute(text("ALTER TABLE vendors ADD COLUMN IF NOT EXISTS reset_token_expires_at TIMESTAMP;"))
+            conn.execute(text("ALTER TABLE riders ADD COLUMN IF NOT EXISTS reset_token VARCHAR(500);"))
+            conn.execute(text("ALTER TABLE riders ADD COLUMN IF NOT EXISTS reset_token_expires_at TIMESTAMP;"))
             conn.commit()
     except Exception as e:
         print(f"[DB MIGRATION WARNING] {e}")
+
 
 async def init_db():
     init_sync_db()
