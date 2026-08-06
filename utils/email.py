@@ -71,7 +71,7 @@ def send_reset_email(to_email: str, reset_token: str, frontend_url: str = None) 
 
     try:
         if not SMTP_PASSWORD:
-            print(f"⚠️ [SMTP NOTICE] SMTP_PASSWORD not configured in .env. Reset Link generated: {reset_link}")
+            print(f"[SMTP NOTICE] SMTP_PASSWORD not configured in .env. Reset Link generated: {reset_link}")
             return False
 
         server = smtplib.SMTP(SMTP_HOST, SMTP_PORT)
@@ -79,12 +79,13 @@ def send_reset_email(to_email: str, reset_token: str, frontend_url: str = None) 
         server.login(SMTP_EMAIL, SMTP_PASSWORD)
         server.sendmail(SMTP_EMAIL, to_email, msg.as_string())
         server.quit()
-        print(f"✅ Reset password email successfully sent to {to_email}")
+        print(f"[SMTP SUCCESS] Reset password email sent to {to_email}")
         return True
     except Exception as e:
-        print(f"❌ Error sending reset email to {to_email}: {e}")
-        print(f"🔗 Generated Reset Link: {reset_link}")
+        print(f"[SMTP ERROR] Error sending reset email to {to_email}: {e}")
+        print(f"[RESET LINK] Generated Reset Link: {reset_link}")
         return False
+
 
 
 def send_welcome_email(to_email: str, user_name: str, login_url: str = None) -> bool:
