@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, status, Request
 from middleware.auth_middleware import get_current_user
 from schemas.user import (
     UserRegister, UserLogin, TokenResponse, UserResponse, GoogleAuthRequest,
@@ -7,6 +7,7 @@ from schemas.user import (
 from controllers import auth_controller
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
+
 
 @router.post(
     "/register",
@@ -51,8 +52,24 @@ async def google_auth(data: GoogleAuthRequest):
     summary="Forgot Password - Send Reset Email",
     description="Send password reset link to user email address"
 )
-async def forgot_password(data: ForgotPasswordRequest):
-    return await auth_controller.forgot_password(data.email, getattr(data, "frontend_url", None))
+async def forgot_password(data: ForgotPasswordRequest, request: Request):
+    frontend_url = None
+    if request:
+        origin = request.headers.get("origin")
+        referer = request.headers.get("referer")
+        if origin:
+            frontend_url = origin.rstrip("/")
+        elif referer:
+            from urllib.parse import urlparse
+            parsed = urlparse(referer)
+            if parsed.scheme and parsed.netloc:
+                frontend_url = f"{parsed.scheme}://{parsed.netloc}"
+
+    if not frontend_url and getattr(data, "frontend_url", None):
+        frontend_url = data.frontend_url
+
+    return await auth_controller.forgot_password(data.email, frontend_url)
+
 
 @router.post(
     "/verify-otp",
